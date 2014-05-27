@@ -5,8 +5,8 @@
 {-# LANGUAGE ViewPatterns #-}
 
 module Airbrake (
-    notify,
-    notifyReq,
+    notifyError,
+    notifyErrorReq,
     AirbrakeConf (..),
     Server (..)
 ) where
@@ -54,12 +54,8 @@ airbrakeConf key =
     AirbrakeConf defaultApiEndpoint key
         (Server defaultEnvironment Nothing Nothing)
 
--- | Notify Airbrake of an exception, providing request metadata along with it.
-notifyReq :: (W.WebRequest req, Exception e) => AirbrakeConf -> req -> e -> IO ()
-notifyReq conf req e = notifyReqM conf (Just req) (toException e)
-
 notifyReqM conf req e = do
-    let report = buildReport conf req (toException e)
+    let report = buildReport conf req e
     print report
     req' <- parseUrl (acApiEndpoint conf)
     let req = req' { requestBody = RequestBodyLBS report, method = "POST" }
@@ -67,12 +63,30 @@ notifyReqM conf req e = do
     print res
 
 -- | Notify Airbrake of an exception.
-notify :: Exception e => AirbrakeConf -> e -> IO ()
-notify conf e = notifyReqM conf (Nothing :: Maybe Wai.Request) (toException e)
+notifyError :: Exception e => AirbrakeConf -> e -> IO ()
+notifyError conf e =
+    notifyReqM conf (Nothing :: Maybe Wai.Request) (describe $ toException e)
+
+-- | Notify Airbrake of an exception, providing request metadata along with it.
+notifyErrorReq :: (W.WebRequest req, Exception e) => AirbrakeConf -> req -> e -> IO ()
+notifyErrorReq conf req e =
+    notifyReqM conf (Just req) (describe $ toException e)
+
+-- | Notify Airbrake of an exception, specifying the error title and
+-- description.
+notify :: AirbrakeConf -> (String, String) -> IO ()
+notify conf e = notifyReqM conf (Nothing :: Maybe Wai.Request) e
+
+-- | Notify Airbrake of an exception, specifying the error title and
+-- description and providing request metadata too.
+notifyReq :: W.WebRequest req => AirbrakeConf -> req -> (String, String) -> IO ()
+notifyReq conf req e = notifyReqM conf (Just req) e
+
+describe (SomeException e) = (show (typeOf e), show e)
 
 sh = fromString . show
 
-buildReport conf req (SomeException e) = renderMarkup $ do
+buildReport conf req (errClass, errDesc) = renderMarkup $ do
     preEscapedText "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
     notice ! nversion "2.3" $ do
         api_key . fromString $ acApiKey conf
@@ -83,8 +97,8 @@ buildReport conf req (SomeException e) = renderMarkup $ do
             url "http://hackage.haskell.org/package/hairbrake"
 
         error $ do
-            class_ . sh $ typeOf e
-            message $ sh e
+            class_ (fromString errClass)
+            message (fromString errDesc)
             backtrace $
                 line ! file __FILE__ ! number (sh (__LINE__ :: Integer))
 
