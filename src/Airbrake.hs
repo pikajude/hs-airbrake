@@ -112,7 +112,7 @@ buildReport conf req err = renderMarkup $ do
                 line ! file __FILE__ ! number (toValue (__LINE__ :: Integer))
 
         forM_ req $ \ r -> request $ do
-            url (toMarkup $ W.url r)
+            url (toMarkup . show $ W.url r)
             forM_ (W.route r) $ \ rt -> component (toMarkup rt)
             forM_ (W.action r) $ \ act -> action (toMarkup act)
             cgi_data . forM_ (W.otherVars r) $ \ (k, v) ->
