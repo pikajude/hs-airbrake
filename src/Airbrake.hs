@@ -117,8 +117,8 @@ notifyReq conf req e l = performNotify l conf (Just req) e
 -- @
 notifyQ :: Q Exp
 notifyQ = do
-    Loc a b c d e <- qLocation
-    [| \ cc ee -> notify cc ee (Loc a b c d e :| []) |]
+    Loc fn _ _ (st, _) _ <- qLocation
+    [| \ cc ee -> notify cc ee ((fn, st) :| []) |]
 
 -- | 'notifyReq', fetching the current file location using Template
 -- Haskell.
@@ -129,8 +129,8 @@ notifyQ = do
 -- @
 notifyReqQ :: Q Exp
 notifyReqQ = do
-    Loc a b c d e <- qLocation
-    [| \ cc r ee -> notifyReq cc r ee (Loc a b c d e :| []) |]
+    Loc fn _ _ (st, _) _ <- qLocation
+    [| \ cc r ee -> notifyReq cc r ee ((fn, st) :| []) |]
 
 -- | Convert any 'Exception' to an 'Error'.
 toError :: Exception e => e -> Error
