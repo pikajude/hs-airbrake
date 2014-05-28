@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -21,6 +22,9 @@ module Airbrake (
 
 import qualified Airbrake.WebRequest as W
 import Control.Exception
+import Control.Monad.Catch
+import Control.Monad.IO.Class
+import Control.Monad.Trans.Control
 import Data.ByteString.Lazy (ByteString)
 import Data.Foldable
 import Data.String
@@ -66,23 +70,26 @@ airbrakeConf :: APIKey -> Environment -> AirbrakeConf
 airbrakeConf k env =
     AirbrakeConf defaultApiEndpoint k (Server env Nothing Nothing)
 
-notifyReqM :: W.WebRequest req => AirbrakeConf -> Maybe req -> Error -> IO ()
+notifyReqM :: (MonadBaseControl IO m, MonadIO m, MonadThrow m, W.WebRequest req)
+           => AirbrakeConf -> Maybe req -> Error -> m ()
 notifyReqM conf req e = do
     let report = buildReport conf req e
-    print report
     req' <- parseUrl (acApiEndpoint conf)
     let rq = req' { requestBody = RequestBodyLBS report, method = "POST" }
-    res <- withManager (httpLbs rq)
-    print res
+    _ <- withManager (httpLbs rq)
+    return ()
 
 -- | Notify Airbrake of an exception.
-notify :: AirbrakeConf -> Error -> IO ()
+notify :: (MonadBaseControl IO m, MonadIO m, MonadThrow m)
+       => AirbrakeConf -> Error -> m ()
 notify conf = notifyReqM conf (Nothing :: Maybe Wai.Request)
 
 -- | Notify Airbrake of an exception, providing request metadata.
-notifyReq :: W.WebRequest req => AirbrakeConf -> req -> Error -> IO ()
+notifyReq :: (MonadBaseControl IO m, MonadIO m, MonadThrow m, W.WebRequest req)
+          => AirbrakeConf -> req -> Error -> m ()
 notifyReq conf req = notifyReqM conf (Just req)
 
+-- | Convert any 'Exception' to an 'Error'.
 toError :: Exception e => e -> Error
 toError (toException -> SomeException e) =
     Error (pack (show (typeOf e))) (pack (show e))
@@ -94,9 +101,9 @@ buildReport conf req err = renderMarkup $ do
         api_key . toMarkup $ acApiKey conf
 
         notifier $ do
-            name "hairbrake"
+            name "airbrake"
             version . toMarkup $ showVersion P.version
-            url "http://hackage.haskell.org/package/hairbrake"
+            url "http://hackage.haskell.org/package/airbrake"
 
         error $ do
             class_ (toMarkup (errorType err))
