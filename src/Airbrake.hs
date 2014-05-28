@@ -21,7 +21,7 @@ import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as T
 import Data.Typeable (typeOf)
 import Data.Version
-import qualified Paths_hairbrake as P
+import qualified Paths_airbrake as P
 import Prelude hiding (error)
 import Network.HTTP.Conduit
 import qualified Network.Wai as Wai
