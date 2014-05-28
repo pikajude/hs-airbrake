@@ -21,6 +21,8 @@ library
                      , http-conduit
                      , monad-control
                      , network
+                     , semigroups
+                     , template-haskell
                      , text
                      , transformers
                      , utf8-string

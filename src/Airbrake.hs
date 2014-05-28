@@ -3,12 +3,24 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 
+-- | Utilities for notifying Airbrake of errors. An 'Error' type is
+-- provided; you can convert any instance of 'Exception' to an 'Error'
+-- using 'toError', which uses the exception's 'Typeable' instance.
+--
+-- Airbrake requires a stack trace for any reported exception, but stack
+-- trace information isn't readily available for Haskell exceptions.
+-- 'notifyQ' and 'notifyReqQ' are provided for the purpose of providing the
+-- current file position as the stack trace.
 module Airbrake (
     -- *** Notifying
     notify, notifyReq,
+    notifyQ, notifyReqQ,
+
+    Locations, Location,
 
     -- *** Wrapping errors
     toError, Error (..),
@@ -27,11 +39,13 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Data.ByteString.Lazy (ByteString)
 import Data.Foldable
+import Data.List.NonEmpty
 import Data.String
 import qualified Data.Text as T (Text)
 import Data.Text (pack)
 import Data.Typeable (typeOf)
 import Data.Version
+import Language.Haskell.TH.Syntax hiding (report)
 import qualified Paths_airbrake as P
 import Prelude hiding (error)
 import Network.HTTP.Conduit
@@ -62,6 +76,11 @@ data Server = Server
             , serverRoot :: Maybe FilePath
             }
 
+-- | A @(filename, line)@ pair.
+type Location = (FilePath, Int)
+
+type Locations = NonEmpty Location
+
 -- | @"http:\/\/api.airbrake.io\/notifier_api\/v2\/notices"@
 defaultApiEndpoint :: String
 defaultApiEndpoint = "http://api.airbrake.io/notifier_api/v2/notices"
@@ -70,10 +89,10 @@ airbrakeConf :: APIKey -> Environment -> AirbrakeConf
 airbrakeConf k env =
     AirbrakeConf defaultApiEndpoint k (Server env Nothing Nothing)
 
-notifyReqM :: (MonadBaseControl IO m, MonadIO m, MonadThrow m, W.WebRequest req)
-           => AirbrakeConf -> Maybe req -> Error -> m ()
-notifyReqM conf req e = do
-    let report = buildReport conf req e
+performNotify :: (MonadBaseControl IO m, MonadIO m, MonadThrow m, W.WebRequest req)
+              => Locations -> AirbrakeConf -> Maybe req -> Error -> m ()
+performNotify loc conf req e = do
+    let report = buildReport loc conf req e
     req' <- parseUrl (acApiEndpoint conf)
     let rq = req' { requestBody = RequestBodyLBS report, method = "POST" }
     _ <- withManager (httpLbs rq)
@@ -81,21 +100,46 @@ notifyReqM conf req e = do
 
 -- | Notify Airbrake of an exception.
 notify :: (MonadBaseControl IO m, MonadIO m, MonadThrow m)
-       => AirbrakeConf -> Error -> m ()
-notify conf = notifyReqM conf (Nothing :: Maybe Wai.Request)
+       => AirbrakeConf -> Error -> Locations -> m ()
+notify conf e l = performNotify l conf (Nothing :: Maybe Wai.Request) e
 
--- | Notify Airbrake of an exception, providing request metadata.
+-- | Notify Airbrake of an exception, providing request metadata along with
+-- it.
 notifyReq :: (MonadBaseControl IO m, MonadIO m, MonadThrow m, W.WebRequest req)
-          => AirbrakeConf -> req -> Error -> m ()
-notifyReq conf req = notifyReqM conf (Just req)
+          => AirbrakeConf -> req -> Error -> Locations -> m ()
+notifyReq conf req e l = performNotify l conf (Just req) e
+
+-- | 'notify', fetching the current file location using Template Haskell.
+--
+-- @
+-- $notifyQ :: ('MonadBaseControl' 'IO' m, 'MonadThrow' m, 'MonadIO' m)
+--          => 'AirbrakeConf' -> 'Error' -> m ()
+-- @
+notifyQ :: Q Exp
+notifyQ = do
+    Loc a b c d e <- qLocation
+    [| \ cc ee -> notify cc ee (Loc a b c d e :| []) |]
+
+-- | 'notifyReq', fetching the current file location using Template
+-- Haskell.
+--
+-- @
+-- $notifyReqQ :: ('MonadBaseControl' 'IO' m, 'MonadThrow' m, 'MonadIO' m, 'W.WebRequest' req)
+--             => 'AirbrakeConf' -> req -> 'Error' -> m ()
+-- @
+notifyReqQ :: Q Exp
+notifyReqQ = do
+    Loc a b c d e <- qLocation
+    [| \ cc r ee -> notifyReq cc r ee (Loc a b c d e :| []) |]
 
 -- | Convert any 'Exception' to an 'Error'.
 toError :: Exception e => e -> Error
 toError (toException -> SomeException e) =
     Error (pack (show (typeOf e))) (pack (show e))
 
-buildReport :: W.WebRequest a => AirbrakeConf -> Maybe a -> Error -> ByteString
-buildReport conf req err = renderMarkup $ do
+buildReport :: W.WebRequest a
+            => Locations -> AirbrakeConf -> Maybe a -> Error -> ByteString
+buildReport locs conf req err = renderMarkup $ do
     preEscapedText "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
     notice ! nversion "2.3" $ do
         api_key . toMarkup $ acApiKey conf
@@ -108,8 +152,9 @@ buildReport conf req err = renderMarkup $ do
         error $ do
             class_ (toMarkup (errorType err))
             message (toMarkup (errorDescription err))
-            backtrace $
-                line ! file __FILE__ ! number (toValue (__LINE__ :: Integer))
+            backtrace $ forM_ locs $ \ (filename, line') ->
+                line ! file (toValue filename)
+                     ! number (toValue line')
 
         forM_ req $ \ r -> request $ do
             url (toMarkup . show $ W.url r)
