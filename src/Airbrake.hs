@@ -3,22 +3,29 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 
 module Airbrake (
-    notifyError,
-    notifyErrorReq,
+    -- *** Notifying
+    notify, notifyReq,
+
+    -- *** Wrapping errors
+    toError, Error (..),
+
+    -- *** Configuration building
+    APIKey, Environment,
+    airbrakeConf, defaultApiEndpoint,
     AirbrakeConf (..),
     Server (..)
 ) where
 
-import Airbrake.DSL
 import qualified Airbrake.WebRequest as W
 import Control.Exception
-import Control.Monad
+import Data.ByteString.Lazy (ByteString)
+import Data.Foldable
 import Data.String
-import Data.Text.Lazy (Text)
-import qualified Data.Text.IO as T
-import qualified Data.Text.Encoding as T
+import qualified Data.Text as T (Text)
+import Data.Text (pack)
 import Data.Typeable (typeOf)
 import Data.Version
 import qualified Paths_airbrake as P
@@ -29,94 +36,113 @@ import Text.Blaze
 import Text.Blaze.Internal
 import Text.Blaze.Renderer.Utf8
 
+type APIKey = String
+type Environment = String
+
+data Error = Error
+           { errorType :: T.Text
+           , errorDescription :: T.Text
+           }
+
 -- | Information to use when communicating with Airbrake.
 data AirbrakeConf = AirbrakeConf
                   { acApiEndpoint :: String
-                  , acApiKey :: String
+                  , acApiKey :: APIKey
                   , acServer :: Server
                   }
 
 -- | Metadata about the server.
 data Server = Server
-            { serverEnvironment :: String
+            { serverEnvironment :: Environment
             , serverAppVersion :: Maybe Version
             , serverRoot :: Maybe FilePath
             }
 
+-- | @"http:\/\/api.airbrake.io\/notifier_api\/v2\/notices"@
 defaultApiEndpoint :: String
 defaultApiEndpoint = "http://api.airbrake.io/notifier_api/v2/notices"
 
-defaultEnvironment :: String
-defaultEnvironment = "development"
+airbrakeConf :: APIKey -> Environment -> AirbrakeConf
+airbrakeConf k env =
+    AirbrakeConf defaultApiEndpoint k (Server env Nothing Nothing)
 
-airbrakeConf :: String -> AirbrakeConf
-airbrakeConf key =
-    AirbrakeConf defaultApiEndpoint key
-        (Server defaultEnvironment Nothing Nothing)
-
+notifyReqM :: W.WebRequest req => AirbrakeConf -> Maybe req -> Error -> IO ()
 notifyReqM conf req e = do
     let report = buildReport conf req e
     print report
     req' <- parseUrl (acApiEndpoint conf)
-    let req = req' { requestBody = RequestBodyLBS report, method = "POST" }
-    res <- withManager (httpLbs req)
+    let rq = req' { requestBody = RequestBodyLBS report, method = "POST" }
+    res <- withManager (httpLbs rq)
     print res
 
 -- | Notify Airbrake of an exception.
-notifyError :: Exception e => AirbrakeConf -> e -> IO ()
-notifyError conf e =
-    notifyReqM conf (Nothing :: Maybe Wai.Request) (describe $ toException e)
+notify :: AirbrakeConf -> Error -> IO ()
+notify conf = notifyReqM conf (Nothing :: Maybe Wai.Request)
 
--- | Notify Airbrake of an exception, providing request metadata along with it.
-notifyErrorReq :: (W.WebRequest req, Exception e) => AirbrakeConf -> req -> e -> IO ()
-notifyErrorReq conf req e =
-    notifyReqM conf (Just req) (describe $ toException e)
+-- | Notify Airbrake of an exception, providing request metadata.
+notifyReq :: W.WebRequest req => AirbrakeConf -> req -> Error -> IO ()
+notifyReq conf req = notifyReqM conf (Just req)
 
--- | Notify Airbrake of an exception, specifying the error title and
--- description.
-notify :: AirbrakeConf -> (String, String) -> IO ()
-notify conf e = notifyReqM conf (Nothing :: Maybe Wai.Request) e
+toError :: Exception e => e -> Error
+toError (toException -> SomeException e) =
+    Error (pack (show (typeOf e))) (pack (show e))
 
--- | Notify Airbrake of an exception, specifying the error title and
--- description and providing request metadata too.
-notifyReq :: W.WebRequest req => AirbrakeConf -> req -> (String, String) -> IO ()
-notifyReq conf req e = notifyReqM conf (Just req) e
-
-describe (SomeException e) = (show (typeOf e), show e)
-
-sh = fromString . show
-
-buildReport conf req (errClass, errDesc) = renderMarkup $ do
+buildReport :: W.WebRequest a => AirbrakeConf -> Maybe a -> Error -> ByteString
+buildReport conf req err = renderMarkup $ do
     preEscapedText "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
     notice ! nversion "2.3" $ do
-        api_key . fromString $ acApiKey conf
+        api_key . toMarkup $ acApiKey conf
 
         notifier $ do
             name "hairbrake"
-            version . fromString $ showVersion P.version
+            version . toMarkup $ showVersion P.version
             url "http://hackage.haskell.org/package/hairbrake"
 
         error $ do
-            class_ (fromString errClass)
-            message (fromString errDesc)
+            class_ (toMarkup (errorType err))
+            message (toMarkup (errorDescription err))
             backtrace $
-                line ! file __FILE__ ! number (sh (__LINE__ :: Integer))
+                line ! file __FILE__ ! number (toValue (__LINE__ :: Integer))
 
-        m req $ \ r -> request $ do
-            url (fromString $ W.url r)
-            m (W.route r) $ \ rt -> component (fromString rt)
-            m (W.action r) $ \ act -> action (fromString act)
+        forM_ req $ \ r -> request $ do
+            url (toMarkup $ W.url r)
+            forM_ (W.route r) $ \ rt -> component (toMarkup rt)
+            forM_ (W.action r) $ \ act -> action (toMarkup act)
             cgi_data . forM_ (W.otherVars r) $ \ (k, v) ->
-                var ! key (fromString k) $ fromString v
+                var ! key (toValue k) $ toMarkup v
 
         let serv = acServer conf
         server_environment $ do
-            environment_name . fromString $ serverEnvironment serv
-            m (serverAppVersion serv) $ \ v ->
-                app_version (fromString $ showVersion v)
+            environment_name . toMarkup $ serverEnvironment serv
+            forM_ (serverAppVersion serv) $ \ v ->
+                app_version (toMarkup $ showVersion v)
 
-            m (serverRoot serv) $ \ v ->
-                project_root (fromString v)
-
-m Nothing _ = return ()
-m (Just x) f = f x
+            forM_ (serverRoot serv) $ \ v ->
+                project_root (toMarkup v)
+    where
+        notice = Parent "notice" "<notice" "</notice>"
+        name = Parent "name" "<name" "</name>"
+        notifier = Parent "notifier" "<notifier" "</notifier>"
+        api_key = Parent "api-key" "<api-key" "</api-key>"
+        version = Parent "version" "<version" "</version>"
+        url = Parent "url" "<url" "</url>"
+        class_ = Parent "class" "<class" "</class>"
+        error = Parent "error" "<error" "</error>"
+        message = Parent "message" "<message" "</message>"
+        backtrace = Parent "backtrace" "<backtrace" "</backtrace>"
+        line = Leaf "line" "<line" " />"
+        file = attribute "file" " file=\""
+        number = attribute "number" " number=\""
+        server_environment = Parent "server-environment" "<server-environment"
+                                 "</server-environment>"
+        environment_name = Parent "environment-name" "<environment-name"
+                               "</environment-name>"
+        app_version = Parent "app-version" "<app-version" "</app-version>"
+        project_root = Parent "project-root" "<project-root" "</project-root>"
+        request = Parent "request" "<request" "</request>"
+        cgi_data = Parent "cgi-data" "<cgi-data" "</cgi-data>"
+        action = Parent "action" "<action" "</action>"
+        component = Parent "component" "<component" "</component>"
+        var = Parent "var" "<var" "</var>"
+        key = attribute "key" " key=\""
+        nversion = attribute "version" " version=\""
