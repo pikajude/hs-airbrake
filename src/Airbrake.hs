@@ -16,16 +16,18 @@
 -- 'notifyQ' and 'notifyReqQ' are provided for the purpose of providing the
 -- current file position as the stack trace.
 module Airbrake (
-    -- *** Notifying
+    -- * Notifying
     notify, notifyReq,
     notifyQ, notifyReqQ,
 
-    Locations, Location,
+    -- * Notification metadata
+    -- *** Location lists
+    NonEmpty (..), Location, Locations,
 
     -- *** Wrapping errors
     toError, Error (..),
 
-    -- *** Configuration building
+    -- * Configuration building
     APIKey, Environment,
     airbrakeConf, defaultApiEndpoint,
     AirbrakeConf (..),
