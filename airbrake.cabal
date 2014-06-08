@@ -12,7 +12,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Airbrake, Airbrake.WebRequest
+  exposed-modules:     Airbrake, Airbrake.WebRequest, Airbrake.Credentials
   other-modules:       Paths_airbrake
   build-depends:       base == 4.*
                      , blaze-markup
