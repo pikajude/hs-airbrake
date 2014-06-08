@@ -31,9 +31,13 @@ module Airbrake (
     APIKey, Environment,
     airbrakeConf, defaultApiEndpoint,
     AirbrakeConf (..),
-    Server (..)
+    Server (..),
+
+    -- * Convenience exports
+    module Airbrake.Credentials
 ) where
 
+import Airbrake.Credentials hiding (APIKey)
 import qualified Airbrake.WebRequest as W
 import Control.Exception
 import Control.Monad.Catch
