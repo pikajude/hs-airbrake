@@ -16,5 +16,6 @@ cabal.mkDerivation (self: {
     description = "An Airbrake notifier for Haskell";
     license = self.stdenv.lib.licenses.bsd3;
     platforms = self.ghc.meta.platforms;
+    maintainers = [ "me@joelt.io" ];
   };
 })
