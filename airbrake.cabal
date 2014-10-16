@@ -22,7 +22,8 @@ library
                      , filepath
                      , http-conduit
                      , monad-control
-                     , network
+                     , network >= 2.6
+                     , network-uri
                      , semigroups
                      , template-haskell
                      , text
