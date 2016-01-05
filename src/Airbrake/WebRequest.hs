@@ -15,7 +15,9 @@ import           Network.URI
 import qualified Network.Wai          as Wai
 
 data WebRequest = WebRequest
-                { requestUrl       :: URI -- ^ The request URL.
+                {
+                -- | The request URL.
+                requestUrl         :: URI
                 -- | Current route.
                 -- This is a carryover from Rails-style MVC and is optional.
                 , requestRoute     :: Maybe String
