@@ -1,21 +1,18 @@
-{ cabal, blazeMarkup, exceptions, httpConduit, monadControl
-, network, semigroups, text, transformers, utf8String, wai
+{ mkDerivation, base, blaze-markup, bytestring, directory
+, exceptions, filepath, http-conduit, monad-control, network
+, network-uri, semigroups, stdenv, template-haskell, text
+, transformers, utf8-string, wai
 }:
-
-cabal.mkDerivation (self: {
+mkDerivation {
   pname = "airbrake";
-  version = "0.1.0.0";
-  sha256 = "cc7d7ad8a58d3d637d732a4c748e1bdfc41ba2308abb31776df7901ece49015e";
+  version = "0.2.0.0";
   src = ./.;
-  buildDepends = [
-    blazeMarkup exceptions httpConduit monadControl network semigroups
-    text transformers utf8String wai
+  libraryHaskellDepends = [
+    base blaze-markup bytestring directory exceptions filepath
+    http-conduit monad-control network network-uri semigroups
+    template-haskell text transformers utf8-string wai
   ];
-  meta = {
-    homepage = "https://github.com/joelteon/airbrake";
-    description = "An Airbrake notifier for Haskell";
-    license = self.stdenv.lib.licenses.bsd3;
-    platforms = self.ghc.meta.platforms;
-    maintainers = [ "me@joelt.io" ];
-  };
-})
+  homepage = "https://github.com/joelteon/airbrake";
+  description = "An Airbrake notifier for Haskell";
+  license = stdenv.lib.licenses.bsd3;
+}

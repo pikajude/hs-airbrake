@@ -1,47 +1,44 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
--- | Class for extracting metadata from HTTP request types that come from
--- different libraries.
+-- | A datatype representing the request attributes Airbrake wants to hear
+-- about. Conversion functions are provided for:
+--
+-- * wai
 module Airbrake.WebRequest (
-    WebRequest (..)
+    WebRequest (..), waiRequestToRequest
 ) where
 
-import Data.ByteString.UTF8 (toString)
-import Data.Maybe
-import qualified Network.Wai as Wai
-import Network.URI
+import           Data.ByteString.UTF8 (toString)
+import           Data.Maybe
+import           Network.URI
+import qualified Network.Wai          as Wai
 
-class WebRequest a where
-    -- | The request URL.
-    url :: a -> URI
+data WebRequest = WebRequest
+                { requestUrl       :: URI -- ^ The request URL.
+                -- | Current route.
+                -- This is a carryover from Rails-style MVC and is optional.
+                , requestRoute     :: Maybe String
+                -- | Controller action being used.
+                -- This is a carryover from Rails-style MVC and is optional.
+                , requestAction    :: Maybe String
+                -- | Any other request metadata that you would like to include
+                -- (server name, user agent, etc.)
+                , requestOtherVars :: [(String, String)]
+                } deriving (Eq, Ord, Show)
 
-    -- | Current route.
-    -- This is a carryover from Rails-style MVC and is optional.
-    route :: a -> Maybe String
-
-    -- | Controller action being used.
-    -- This is a carryover from Rails-style MVC and is optional.
-    action :: a -> Maybe String
-
-    -- | Any other request metadata that you would like to include
-    -- (server name, user agent, etc.)
-    otherVars :: a -> [(String, String)]
-
--- | @wai@ requests
-instance WebRequest Wai.Request where
-    url req = case parseURI uriS of
-                  Just u -> u
-                  Nothing -> error "Failure producing URI from wai request."
-        where
-            uriS = (if Wai.isSecure req then "https://" else "http://")
-                ++ show (Wai.remoteHost req)
-                ++ toString (Wai.rawPathInfo req)
-                ++ toString (Wai.rawQueryString req)
-
-    route _ = Nothing
-    action _ = Nothing
-
-    otherVars req = catMaybes
+waiRequestToRequest :: Wai.Request -> WebRequest
+waiRequestToRequest req = WebRequest{..} where
+    requestUrl = fromMaybe
+        (error "Failure producing URI from wai request.")
+        (parseURI uriS)
+    uriS = (if Wai.isSecure req then "https://" else "http://")
+        ++ show (Wai.remoteHost req)
+        ++ toString (Wai.rawPathInfo req)
+        ++ toString (Wai.rawQueryString req)
+    requestRoute = Nothing
+    requestAction = Nothing
+    requestOtherVars = catMaybes
         [ k "Host" "HTTP_HOST"
         , k "User-Agent" "HTTP_USER_AGENT"
         , k "Referer" "HTTP_REFERER"

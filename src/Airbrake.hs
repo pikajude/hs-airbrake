@@ -1,10 +1,10 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP                       #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE TemplateHaskell           #-}
+{-# LANGUAGE ViewPatterns              #-}
 {-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 
 -- | Utilities for notifying Airbrake of errors. An 'Error' type is
@@ -37,49 +37,48 @@ module Airbrake (
     module Airbrake.Credentials
 ) where
 
-import Airbrake.Credentials hiding (APIKey)
-import qualified Airbrake.WebRequest as W
-import Control.Exception
-import Control.Monad.Catch
-import Control.Monad.IO.Class
-import Control.Monad.Trans.Control
-import Data.ByteString.Lazy (ByteString)
-import Data.Foldable
-import Data.List.NonEmpty
-import Data.String
-import qualified Data.Text as T (Text)
-import Data.Text (pack)
-import Data.Typeable (typeOf)
-import Data.Version
-import Language.Haskell.TH.Syntax hiding (report)
-import qualified Paths_airbrake as P
-import Prelude hiding (error)
-import Network.HTTP.Conduit
-import qualified Network.Wai as Wai
-import Text.Blaze
-import Text.Blaze.Internal
-import Text.Blaze.Renderer.Utf8
+import           Airbrake.Credentials        hiding (APIKey)
+import qualified Airbrake.WebRequest         as W
+import           Control.Exception
+import           Control.Monad.Catch
+import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Control
+import           Data.ByteString.Lazy        (ByteString)
+import           Data.Foldable
+import           Data.List.NonEmpty
+import           Data.String
+import           Data.Text                   (pack)
+import qualified Data.Text                   as T (Text)
+import           Data.Typeable               (typeOf)
+import           Data.Version
+import           Language.Haskell.TH.Syntax  hiding (report)
+import           Network.HTTP.Conduit
+import qualified Paths_airbrake              as P
+import           Prelude                     hiding (error)
+import           Text.Blaze
+import           Text.Blaze.Internal
+import           Text.Blaze.Renderer.Utf8
 
 type APIKey = String
 type Environment = String
 
 data Error = Error
-           { errorType :: T.Text
+           { errorType        :: T.Text
            , errorDescription :: T.Text
            }
 
 -- | Information to use when communicating with Airbrake.
 data AirbrakeConf = AirbrakeConf
                   { acApiEndpoint :: String
-                  , acApiKey :: APIKey
-                  , acServer :: Server
+                  , acApiKey      :: APIKey
+                  , acServer      :: Server
                   }
 
 -- | Metadata about the server.
 data Server = Server
             { serverEnvironment :: Environment
-            , serverAppVersion :: Maybe Version
-            , serverRoot :: Maybe FilePath
+            , serverAppVersion  :: Maybe Version
+            , serverRoot        :: Maybe FilePath
             }
 
 -- | A @(filename, line)@ pair.
@@ -95,24 +94,25 @@ airbrakeConf :: APIKey -> Environment -> AirbrakeConf
 airbrakeConf k env =
     AirbrakeConf defaultApiEndpoint k (Server env Nothing Nothing)
 
-performNotify :: (MonadBaseControl IO m, MonadIO m, MonadThrow m, W.WebRequest req)
-              => Locations -> AirbrakeConf -> Maybe req -> Error -> m ()
+performNotify :: (MonadBaseControl IO m, MonadIO m, MonadThrow m)
+              => Locations -> AirbrakeConf -> Maybe W.WebRequest -> Error -> m ()
 performNotify loc conf req e = do
     let report = buildReport loc conf req e
     req' <- parseUrl (acApiEndpoint conf)
     let rq = req' { requestBody = RequestBodyLBS report, method = "POST" }
-    _ <- withManager (httpLbs rq)
+    man <- liftIO $ newManager tlsManagerSettings
+    _ <- httpLbs rq man
     return ()
 
 -- | Notify Airbrake of an exception.
 notify :: (MonadBaseControl IO m, MonadIO m, MonadThrow m)
        => AirbrakeConf -> Error -> Locations -> m ()
-notify conf e l = performNotify l conf (Nothing :: Maybe Wai.Request) e
+notify conf e l = performNotify l conf Nothing e
 
 -- | Notify Airbrake of an exception, providing request metadata along with
 -- it.
-notifyReq :: (MonadBaseControl IO m, MonadIO m, MonadThrow m, W.WebRequest req)
-          => AirbrakeConf -> req -> Error -> Locations -> m ()
+notifyReq :: (MonadBaseControl IO m, MonadIO m, MonadThrow m)
+          => AirbrakeConf -> W.WebRequest -> Error -> Locations -> m ()
 notifyReq conf req e l = performNotify l conf (Just req) e
 
 -- | 'notify', fetching the current file location using Template Haskell.
@@ -143,8 +143,7 @@ toError :: Exception e => e -> Error
 toError (toException -> SomeException e) =
     Error (pack (show (typeOf e))) (pack (show e))
 
-buildReport :: W.WebRequest a
-            => Locations -> AirbrakeConf -> Maybe a -> Error -> ByteString
+buildReport :: Locations -> AirbrakeConf -> Maybe W.WebRequest -> Error -> ByteString
 buildReport locs conf req err = renderMarkup $ do
     preEscapedText "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
     notice ! nversion "2.3" $ do
@@ -163,10 +162,10 @@ buildReport locs conf req err = renderMarkup $ do
                      ! number (toValue line')
 
         forM_ req $ \ r -> request $ do
-            url (toMarkup . show $ W.url r)
-            forM_ (W.route r) $ \ rt -> component (toMarkup rt)
-            forM_ (W.action r) $ \ act -> action (toMarkup act)
-            cgi_data . forM_ (W.otherVars r) $ \ (k, v) ->
+            url (toMarkup . show $ W.requestUrl r)
+            forM_ (W.requestRoute r) $ \ rt -> component (toMarkup rt)
+            forM_ (W.requestAction r) $ \ act -> action (toMarkup act)
+            cgi_data . forM_ (W.requestOtherVars r) $ \ (k, v) ->
                 var ! key (toValue k) $ toMarkup v
 
         let serv = acServer conf

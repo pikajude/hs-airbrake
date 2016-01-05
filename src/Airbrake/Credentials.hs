@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 -- | Utilities for loading the API key from the environment.
 module Airbrake.Credentials (
     APIKey,
@@ -6,13 +8,16 @@ module Airbrake.Credentials (
     loadCredentialsFromEnvOrFile, loadCredentialsDefault
 ) where
 
-import Control.Monad (liftM)
+import Control.Monad          (liftM)
 import Control.Monad.IO.Class
-import Data.Functor
-import Data.List (find)
+import Data.List              (find)
 import System.Directory
 import System.Environment
 import System.FilePath
+
+#if __GLASGOW_HASKELL__ <= 708
+import Control.Applicative    ((<$>))
+#endif
 
 type APIKey = String
 
