@@ -1,1 +1,1 @@
-[![Build status](https://travis-ci.org/joelteon/hs-airbrake.svg)](http://travis-ci.org/joelteon/hs-airbrake)
+[![Build status](https://travis-ci.org/pikajude/hs-airbrake.svg)](http://travis-ci.org/pikajude/hs-airbrake)
